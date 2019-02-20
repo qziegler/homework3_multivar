@@ -10,8 +10,8 @@
 _____
 <a id='part1'></a>
 
-# Univariate
-### First Assignment 
+# Multivariate
+### Third Assignment 
 ```{r}
 library(ggplot2)
 ```
