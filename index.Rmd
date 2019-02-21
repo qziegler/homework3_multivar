@@ -16,72 +16,155 @@ _____
 library(ggplot2)
 ```
 
-
 ```{r}
 data_link = "https://github.com/qziegler/Visual-Analytics-Project/raw/master/data/dc_crime_tract_demo.csv"
-crimedf <- read.csv(data_link)
+crimedf <- read.csv(data_link, stringsAsFactors = FALSE)
+```
+
+```{r}
+str(crimedf)
+```
+
+```{r}
+crimedf$share_min <- (crimedf$total_pop - crimedf$total_nhw)/(crimedf$total_pop)*100
+summary(crimedf$share_min)
+```
+
+```{r}
+summary(crimedf$hh_med_income)
+
+summary(crimedf$unemp_rate)
+
+crimedf$vacancy_rate <- crimedf$vacancy_rate*100
+summary(crimedf$vacancy_rate)
+```
+
+```{r}
+aggVars <- c("CENSUS_TRACT", "total_pop", "share_min", "hh_med_income", "unemp_rate", "vacancy_rate")
+aggdf <- crimedf[,aggVars]
+
+aggdf <- unique(aggdf)
+aggdf <- aggdf[!is.na(aggdf$CENSUS_TRACT),]
 ```
 
 ```{r}
 table(crimedf$OFFENSE, useNA = "always")
+```
+
+```{r}
 violent_crimes <- c("ARSON", "ASSAULT W/DANGEROUS WEAPON", "HOMICIDE", "ROBBERY", "SEX ABUSE")
 
 crimedf$violent_crime <- ifelse(crimedf$OFFENSE %in% violent_crimes, 1, 0)
 
-census_pop <- aggregate(total_pop ~ CENSUS_TRACT, data = crimedf, mean)
 census_vc  <- aggregate(violent_crime ~ CENSUS_TRACT, data = crimedf, sum)
 
-census_violent <- merge(census_pop, census_vc, by="CENSUS_TRACT")
+census_violent <- merge(aggdf, census_vc, by="CENSUS_TRACT")
 
 census_violent$vcrate <- (census_violent$violent_crime/census_violent$total_pop)*100000
 head(census_violent)
 ```
 
-
-### Original Plot
-
-<br> 
-<center><img src="https://i.imgur.com/JXObpmR.png" width="500"></center>
-
-### Box Plot - Final Plot
-
+### Multivariate Plots
 ```{r}
-bp = boxplot(census_violent$vcrate,horizontal = T,ylim=c(0,16000))
+library(GGally) 
 ```
 
 ```{r}
-bp$out
-census_violent <- census_violent[census_violent$vcrate < 15000,]
-outliers <- census_violent$CENSUS_TRACT[census_violent$vcrate %in% bp$out]
-outliers
+col_names <- c("Census.Tract", 
+               "Total.Population", 
+               "Share.Non-Hispanic.White",
+               "Median.Household.Income",
+               "Unemployment.Rate",
+               "Vacancy.Rate",
+               "Violent.Crime.Count",
+               "Violent.Crime.Rate")
+
+corrdf <- census_violent
+colnames(corrdf) <- col_names
+```
+
+
+```{r}
+corrp = ggcorr(corrdf[,-c(1,7)],
+                 hjust = 0.9,
+                 size=3,
+                 layout.exp=1,
+                 low = 'red',high = 'blue')
+
+corrp2 = corrp + guides(fill = guide_legend("Correlation:"))
+
+title = "Washington, DC: Census tract median household income and population is strongly \nand negatively correlated with the violent crime rate."
+caption = "Source: Washington, DC Metropolitan Police Department, 2016 American Community Survey 5-Year Estimates"
+
+corrp3 = corrp2 + labs(title = title,
+                       caption = caption)
+
+corrp4 = corrp3 + theme(plot.title = element_text(size = 11, face = "bold", hjust = 0),
+                        plot.caption = element_text(hjust = 0),
+                        legend.position = "right")
+
+corrp4
+
 ```
 
 ```{r}
-boxVC = ggplot(census_violent, aes(y=vcrate, z="Test"))
-
-boxVC = boxVC + geom_boxplot() + coord_flip()
-
-box_title = "Washington, DC: In 2017, seven census tracts had an exceptionally high violent crime rate."
-box_caption = "Source: Washington, DC Metropolitan Police Department \n*The Census tract representing the National Mall is excluded from this plot"
-
-boxVC1 = boxVC + labs(title = box_title,
-                      y = "Annual Violent Crime Rate (Crimes per 100,000 residents)",
-                      caption = box_caption )
-
-boxVC2 = boxVC1 + theme(panel.background = element_rect(fill = "white", color = "grey50"),
-                        axis.title.x = element_text(size = 9, vjust = -1),
-                        axis.text.y = element_blank(),
-                        axis.ticks.y = element_blank(),
-                        plot.title = element_text(size = 11, face = "bold"),
-                        plot.caption = element_text(hjust = 0, vjust = -1))
+regdf <- census_violent[complete.cases(census_violent),]
+regdf <- apply(regdf, 2, function(x) ifelse(x==0,0.01,x))
+regdf <- as.data.frame(regdf)
 
 
-box_label = "Outliers are Census Tracts 5800, 7406, 7803, \n7804, 8803, 9603, and 10700"
-boxVC3 = boxVC2 + annotate("text", x = -0.1, y = 2600,
-                           label = box_label, 
-                           size = 3) +
-                  theme(axis.title.y = element_blank())
+```
 
-boxVC3
+```{r}
+modelA <- lm(log(vcrate) ~ log(total_pop) + log(hh_med_income) + log(vacancy_rate), 
+              data = regdf)
+
+summary(modelA)
+```
+```{r}
+modelA_t <- tidy(modelA) %>% mutate(model = "No Employment Control")
+```
+
+```{r}
+modelB <- lm(log(vcrate) ~ log(total_pop) + log(hh_med_income) + log(unemp_rate) 
+             + log(vacancy_rate), 
+              data = regdf)
+
+summary(modelB)
+```
+```{r}
+modelB_t <- tidy(modelB) %>% mutate(model = "Employment Control")
+allmodels <- rbind(modelB_t, modelA_t)
+```
+
+
+
+```{r}
+plot1 = dwplot(allmodels) + 
+            geom_vline(xintercept = 0, 
+               colour = "grey60", 
+               linetype = 2) +
+            scale_colour_grey(start = .1, end = .5, name="Model") + theme_bw()
+
+title = "Controlling for unemployment rate substantially reduces the magnitude \nof the negative effect of household income on the violent crime rate."
+caption = "Source: Washington, DC Metropolitan Police Department, 2016 American Community Survey 5-Year Estimates"
+
+plot2 = plot1 + labs(title = title,
+                     x = "% Change in Violent Crime Rate",
+                     y = "Census Tract Characteristic",
+                     caption = caption)
+
+plot3 = plot2 + scale_y_discrete(labels = c("Vacancy Rate",
+                                            "Unemployment Rate",
+                                            "Median Household Income",
+                                            "Total Population")) +
+                scale_x_continuous(breaks = c(-2,-1,0,1,2), limits = c(-2,2))
+
+plot4 = plot3 + theme(panel.grid.major.y = element_blank(),
+                      plot.title = element_text(size = 11, face = "bold", hjust = 0.5),
+                      axis.title = element_text(size = 9),
+                      plot.caption = element_text(hjust = 0.5))
+
+plot4
 ```
 
